@@ -245,19 +245,35 @@ export default function Home() {
               fontSize: 14,
             }}
           >
-            {["Home", "Debts", "Strategy", "Plan", "Track"].map((item) => (
-              <span
-                key={item}
-                style={{
-                  padding: "9px 13px",
-                  borderRadius: 999,
-                  background: item === "Home" ? "#111827" : "transparent",
-                  color: item === "Home" ? "#ffffff" : "#4b5563",
-                }}
-              >
-                {item}
-              </span>
-            ))}
+            {["Home", "Debts", "Strategy", "Plan", "Track"].map((item) =>
+  item === "Debts" ? (
+    <a
+      key={item}
+      href="/debts"
+      style={{
+        padding: "9px 13px",
+        borderRadius: 999,
+        background: "transparent",
+        color: "#4b5563",
+        textDecoration: "none",
+      }}
+    >
+      {item}
+    </a>
+  ) : (
+    <span
+      key={item}
+      style={{
+        padding: "9px 13px",
+        borderRadius: 999,
+        background: item === "Home" ? "#111827" : "transparent",
+        color: item === "Home" ? "#ffffff" : "#4b5563",
+      }}
+    >
+      {item}
+    </span>
+  )
+)}
           </nav>
         </div>
       </header>
