@@ -1,240 +1,541 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+const money = (value) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(Number(value || 0));
 
 export default function Home() {
   const [debts, setDebts] = useState([]);
-  const [name, setName] = useState("");
-  const [balance, setBalance] = useState("");
-  const [minimum, setMinimum] = useState("");
-  const [interest, setInterest] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
-  const addDebt = (e) => {
+  const [form, setForm] = useState({
+    name: "",
+    balance: "",
+    minimum: "",
+    interest: "",
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("debt-payoff-data");
+      if (saved) setDebts(JSON.parse(saved));
+    } catch (error) {
+      console.error(error);
+    }
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (loaded) {
+      localStorage.setItem("debt-payoff-data", JSON.stringify(debts));
+    }
+  }, [debts, loaded]);
+
+  const totalDebt = useMemo(
+    () => debts.reduce((sum, debt) => sum + debt.balance, 0),
+    [debts]
+  );
+
+  const totalOriginal = useMemo(
+    () => debts.reduce((sum, debt) => sum + debt.originalBalance, 0),
+    [debts]
+  );
+
+  const totalPaid = Math.max(0, totalOriginal - totalDebt);
+
+  const monthlyMinimum = useMemo(
+    () => debts.reduce((sum, debt) => sum + debt.minimum, 0),
+    [debts]
+  );
+
+  const progress =
+    totalOriginal > 0
+      ? Math.min(100, (totalPaid / totalOriginal) * 100)
+      : 0;
+
+  function addDebt(e) {
     e.preventDefault();
-    if (!name || !balance) return;
 
-    const newDebt = {
+    const balance = Number(form.balance);
+    const minimum = Number(form.minimum);
+    const interest = Number(form.interest || 0);
+
+    if (!form.name.trim() || balance <= 0 || minimum < 0) return;
+
+    const debt = {
       id: Date.now(),
-      name,
-      balance: Number(balance),
-      minimum: Number(minimum || 0),
-      interest: Number(interest || 0),
+      name: form.name.trim(),
+      originalBalance: balance,
+      balance,
+      minimum,
+      interest,
+      payments: [],
     };
 
-    setDebts([...debts, newDebt]);
-    setName("");
-    setBalance("");
-    setMinimum("");
-    setInterest("");
-  };
+    setDebts((current) => [...current, debt]);
 
-  const deleteDebt = (id) => {
-    setDebts(debts.filter((debt) => debt.id !== id));
-  };
-
-  const totalDebt = debts.reduce(
-    (total, debt) => total + debt.balance,
-    0
-  );
-
-  const totalMinimum = debts.reduce(
-    (total, debt) => total + debt.minimum,
-    0
-  );
-
-  const money = (amount) =>
-    amount.toLocaleString("en-US", {
-      style: "currency",
-      currency: "USD",
+    setForm({
+      name: "",
+      balance: "",
+      minimum: "",
+      interest: "",
     });
+  }
+
+  function registerPayment(id) {
+    const raw = window.prompt("How much did you pay?");
+    if (raw === null) return;
+
+    const amount = Number(raw);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      window.alert("Enter a valid payment amount.");
+      return;
+    }
+
+    setDebts((current) =>
+      current.map((debt) => {
+        if (debt.id !== id) return debt;
+
+        const actualPayment = Math.min(amount, debt.balance);
+        const newBalance = Math.max(0, debt.balance - actualPayment);
+
+        return {
+          ...debt,
+          balance: newBalance,
+          payments: [
+            ...debt.payments,
+            {
+              id: Date.now(),
+              amount: actualPayment,
+              date: new Date().toISOString(),
+              balanceAfter: newBalance,
+            },
+          ],
+        };
+      })
+    );
+  }
+
+  function deleteDebt(id) {
+    if (!window.confirm("Delete this debt?")) return;
+    setDebts((current) => current.filter((debt) => debt.id !== id));
+  }
+
+  const history = useMemo(() => {
+    const events = [];
+
+    debts.forEach((debt) => {
+      debt.payments.forEach((payment) => {
+        events.push({
+          ...payment,
+          debtId: debt.id,
+        });
+      });
+    });
+
+    events.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (totalOriginal <= 0) return [];
+
+    let running = totalOriginal;
+
+    const points = [
+      {
+        label: "Start",
+        balance: totalOriginal,
+      },
+    ];
+
+    events.forEach((payment) => {
+      running = Math.max(0, running - payment.amount);
+
+      points.push({
+        label: new Date(payment.date).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        }),
+        balance: running,
+      });
+    });
+
+    return points;
+  }, [debts, totalOriginal]);
 
   return (
     <main
       style={{
-        minHeight: "100vh",
-        background: "#0f172a",
-        color: "white",
-        fontFamily: "Arial, sans-serif",
+        maxWidth: 1000,
+        margin: "0 auto",
         padding: "40px 20px",
+        fontFamily: "Arial, sans-serif",
       }}
     >
-      <div style={{ maxWidth: "1000px", margin: "0 auto" }}>
-        <h1 style={{ fontSize: "42px", marginBottom: "8px" }}>
-          Debt Payoff
-        </h1>
+      <h1 style={{ marginBottom: 5 }}>Debt Payoff</h1>
+      <p style={{ marginTop: 0, opacity: 0.65 }}>
+        Track your debts, payments and payoff progress.
+      </p>
 
-        <p style={{ color: "#94a3b8", marginBottom: "35px" }}>
-          Track your debt and take control of your payoff journey.
-        </p>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 15,
+          margin: "30px 0",
+        }}
+      >
+        <Card title="Total Debt" value={money(totalDebt)} />
+        <Card title="Monthly Minimum" value={money(monthlyMinimum)} />
+        <Card title="Total Paid" value={money(totalPaid)} />
+        <Card title="Progress" value={`${progress.toFixed(1)}%`} />
+      </div>
+
+      <section
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 14,
+          padding: 20,
+          marginBottom: 25,
+        }}
+      >
+        <h2>Payoff Progress</h2>
 
         <div
           style={{
-            display: "flex",
-            gap: "20px",
-            flexWrap: "wrap",
-            marginBottom: "30px",
+            width: "100%",
+            height: 18,
+            background: "#eee",
+            borderRadius: 20,
+            overflow: "hidden",
+            marginBottom: 25,
           }}
         >
-          <div style={cardStyle}>
-            <p style={labelStyle}>Total Debt</p>
-            <h2>{money(totalDebt)}</h2>
-          </div>
-
-          <div style={cardStyle}>
-            <p style={labelStyle}>Monthly Minimums</p>
-            <h2>{money(totalMinimum)}</h2>
-          </div>
-
-          <div style={cardStyle}>
-            <p style={labelStyle}>Active Debts</p>
-            <h2>{debts.length}</h2>
-          </div>
+          <div
+            style={{
+              height: "100%",
+              width: `${progress}%`,
+              background: "#111",
+              transition: "width 0.3s ease",
+            }}
+          />
         </div>
 
-        <div style={sectionStyle}>
-          <h2>Add a Debt</h2>
+        {history.length > 0 ? (
+          <DebtChart data={history} />
+        ) : (
+          <p>Add a debt to start your progress chart.</p>
+        )}
+      </section>
 
-          <form onSubmit={addDebt}>
-            <input
-              style={inputStyle}
-              placeholder="Debt name (Capital One, Car Loan...)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
+      <section
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 14,
+          padding: 20,
+          marginBottom: 25,
+        }}
+      >
+        <h2>Add a Debt</h2>
 
-            <input
-              style={inputStyle}
-              type="number"
-              step="0.01"
-              placeholder="Current balance"
-              value={balance}
-              onChange={(e) => setBalance(e.target.value)}
-            />
+        <form
+          onSubmit={addDebt}
+          style={{
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <input
+            placeholder="Debt Name"
+            value={form.name}
+            onChange={(e) =>
+              setForm({ ...form, name: e.target.value })
+            }
+            style={inputStyle}
+          />
 
-            <input
-              style={inputStyle}
-              type="number"
-              step="0.01"
-              placeholder="Minimum monthly payment"
-              value={minimum}
-              onChange={(e) => setMinimum(e.target.value)}
-            />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Current Balance"
+            value={form.balance}
+            onChange={(e) =>
+              setForm({ ...form, balance: e.target.value })
+            }
+            style={inputStyle}
+          />
 
-            <input
-              style={inputStyle}
-              type="number"
-              step="0.01"
-              placeholder="Interest rate (APR %)"
-              value={interest}
-              onChange={(e) => setInterest(e.target.value)}
-            />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Minimum Monthly Payment"
+            value={form.minimum}
+            onChange={(e) =>
+              setForm({ ...form, minimum: e.target.value })
+            }
+            style={inputStyle}
+          />
 
-            <button type="submit" style={buttonStyle}>
-              + Add Debt
-            </button>
-          </form>
-        </div>
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Interest Rate (%)"
+            value={form.interest}
+            onChange={(e) =>
+              setForm({ ...form, interest: e.target.value })
+            }
+            style={inputStyle}
+          />
 
-        <div style={sectionStyle}>
-          <h2>Your Debts</h2>
+          <button type="submit" style={primaryButton}>
+            Add a Debt
+          </button>
+        </form>
+      </section>
 
-          {debts.length === 0 ? (
-            <p style={{ color: "#94a3b8" }}>
-              You haven't added any debts yet.
-            </p>
-          ) : (
-            debts.map((debt) => (
-              <div key={debt.id} style={debtStyle}>
-                <div>
-                  <h3 style={{ margin: "0 0 8px" }}>
-                    {debt.name}
-                  </h3>
+      <section>
+        <h2>Active Debts</h2>
 
-                  <div style={{ color: "#94a3b8" }}>
-                    Balance: {money(debt.balance)}
-                    <br />
-                    Minimum: {money(debt.minimum)} / month
-                    <br />
-                    APR: {debt.interest}%
-                  </div>
+        {debts.length === 0 && <p>No debts added yet.</p>}
+
+        <div style={{ display: "grid", gap: 15 }}>
+          {debts.map((debt) => {
+            const paid = debt.originalBalance - debt.balance;
+            const debtProgress =
+              debt.originalBalance > 0
+                ? (paid / debt.originalBalance) * 100
+                : 0;
+
+            return (
+              <div
+                key={debt.id}
+                style={{
+                  border: "1px solid #ddd",
+                  borderRadius: 14,
+                  padding: 20,
+                }}
+              >
+                <h3 style={{ marginTop: 0 }}>{debt.name}</h3>
+
+                <p>
+                  Remaining Balance: <strong>{money(debt.balance)}</strong>
+                </p>
+
+                <p>
+                  Original Balance: {money(debt.originalBalance)}
+                </p>
+
+                <p>
+                  Paid: <strong>{money(paid)}</strong>
+                </p>
+
+                <p>
+                  Minimum: {money(debt.minimum)} / month
+                </p>
+
+                <p>Interest: {debt.interest}%</p>
+
+                <div
+                  style={{
+                    width: "100%",
+                    height: 10,
+                    background: "#eee",
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    margin: "15px 0",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.min(100, debtProgress)}%`,
+                      height: "100%",
+                      background: "#111",
+                    }}
+                  />
                 </div>
 
-                <button
-                  onClick={() => deleteDebt(debt.id)}
-                  style={deleteStyle}
+                <p>{debtProgress.toFixed(1)}% paid</p>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                  }}
                 >
-                  Delete
-                </button>
+                  <button
+                    onClick={() => registerPayment(debt.id)}
+                    style={primaryButton}
+                  >
+                    Register Payment
+                  </button>
+
+                  <button
+                    onClick={() => deleteDebt(debt.id)}
+                    style={secondaryButton}
+                  >
+                    Delete
+                  </button>
+                </div>
+
+                {debt.payments.length > 0 && (
+                  <div style={{ marginTop: 20 }}>
+                    <strong>Payment History</strong>
+
+                    {debt.payments
+                      .slice()
+                      .reverse()
+                      .map((payment) => (
+                        <p key={payment.id} style={{ margin: "8px 0" }}>
+                          {new Date(payment.date).toLocaleDateString()} —{" "}
+                          {money(payment.amount)}
+                        </p>
+                      ))}
+                  </div>
+                )}
               </div>
-            ))
-          )}
+            );
+          })}
         </div>
-      </div>
+      </section>
     </main>
   );
 }
 
-const cardStyle = {
-  flex: "1",
-  minWidth: "200px",
-  background: "#1e293b",
-  padding: "24px",
-  borderRadius: "16px",
-};
+function Card({ title, value }) {
+  return (
+    <div
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: 14,
+        padding: 20,
+      }}
+    >
+      <div style={{ opacity: 0.65 }}>{title}</div>
+      <div
+        style={{
+          fontSize: 26,
+          fontWeight: "bold",
+          marginTop: 8,
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
 
-const labelStyle = {
-  color: "#94a3b8",
-  margin: "0 0 10px",
-};
+function DebtChart({ data }) {
+  const width = 800;
+  const height = 260;
+  const padding = 45;
 
-const sectionStyle = {
-  background: "#1e293b",
-  padding: "25px",
-  borderRadius: "16px",
-  marginBottom: "25px",
-};
+  const maxBalance = Math.max(...data.map((p) => p.balance), 1);
+
+  const points = data.map((point, index) => {
+    const x =
+      data.length === 1
+        ? padding
+        : padding +
+          (index / (data.length - 1)) * (width - padding * 2);
+
+    const y =
+      height -
+      padding -
+      (point.balance / maxBalance) * (height - padding * 2);
+
+    return { ...point, x, y };
+  });
+
+  const line = points.map((p) => `${p.x},${p.y}`).join(" ");
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{
+          width: "100%",
+          minWidth: 600,
+          border: "1px solid #eee",
+          borderRadius: 12,
+        }}
+      >
+        <line
+          x1={padding}
+          y1={height - padding}
+          x2={width - padding}
+          y2={height - padding}
+          stroke="#bbb"
+        />
+
+        <line
+          x1={padding}
+          y1={padding}
+          x2={padding}
+          y2={height - padding}
+          stroke="#bbb"
+        />
+
+        <polyline
+          points={line}
+          fill="none"
+          stroke="#111"
+          strokeWidth="4"
+        />
+
+        {points.map((point, index) => (
+          <g key={index}>
+            <circle cx={point.x} cy={point.y} r="6" fill="#111" />
+
+            <text
+              x={point.x}
+              y={point.y - 12}
+              textAnchor="middle"
+              fontSize="12"
+            >
+              ${Math.round(point.balance)}
+            </text>
+
+            <text
+              x={point.x}
+              y={height - 18}
+              textAnchor="middle"
+              fontSize="11"
+            >
+              {point.label}
+            </text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
 
 const inputStyle = {
-  width: "100%",
-  boxSizing: "border-box",
-  padding: "14px",
-  marginTop: "12px",
-  borderRadius: "10px",
-  border: "1px solid #475569",
-  background: "#0f172a",
-  color: "white",
-  fontSize: "16px",
+  padding: 12,
+  border: "1px solid #ccc",
+  borderRadius: 8,
+  fontSize: 16,
 };
 
-const buttonStyle = {
-  width: "100%",
-  marginTop: "16px",
-  padding: "14px",
-  border: "none",
-  borderRadius: "10px",
-  background: "#2563eb",
-  color: "white",
-  fontSize: "16px",
-  fontWeight: "bold",
-  cursor: "pointer",
-};
-
-const debtStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: "20px",
-  padding: "20px",
-  background: "#0f172a",
-  borderRadius: "12px",
-  marginTop: "15px",
-};
-
-const deleteStyle = {
-  background: "#dc2626",
+const primaryButton = {
+  padding: "12px 18px",
+  background: "#111",
   color: "white",
   border: "none",
-  borderRadius: "8px",
-  padding: "10px 14px",
+  borderRadius: 8,
   cursor: "pointer",
+  fontSize: 15,
+};
+
+const secondaryButton = {
+  padding: "12px 18px",
+  background: "white",
+  color: "#111",
+  border: "1px solid #ccc",
+  borderRadius: 8,
+  cursor: "pointer",
+  fontSize: 15,
 };
